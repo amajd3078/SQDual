@@ -22,6 +22,64 @@ The **SQDual** project is custom-built for Minecraft servers (compatible with mo
 
 ---
 
+## 💻 Commands & Detailed Usage
+
+### 👥 Player Commands (No Permission Required)
+
+* **`/duel <player>`**
+  * **Description:** Sends a 1v1 duel request directly to the specified target player. This action opens the Kit Selection GUI, allowing you to choose the desired kit/kit type before sending the request.
+
+* **`/spectator <player>`**
+  * **Description:** Teleports you into spectator mode for an ongoing match involving the target player. You become completely invisible to the players in the match and receive an **Inspect Player** hotbar item to check their active potion effects, armor durability, health, and hunger.
+
+* **`/sqsettings`**
+  * **Description:** Opens your personal Profile Settings GUI. From here, you can toggle:
+    * Accepting or declining incoming duel requests.
+    * Allowing or blocking spectators during your matches.
+    * Enabling Auto-Queue mode to jump into matches faster.
+    * Hiding/Showing other players in the lobby to eliminate lag.
+
+---
+
+### 🛡️ Admin Commands (`Permission: sqdual.admin`)
+
+All administrative management is controlled using the main `/sqd` command branch:
+
+* **`/sqd editmode`**
+  * **Description:** Toggles administrative edit mode on or off. Enabling this grants you access to full kit creation tools, location setting commands, and inventory management options.
+
+* **`/sqd sethub`**
+  * **Description:** Sets the global duel lobby/hub spawn point at your current exact position and direction. All players returning from finished matches or typing hub commands will be sent here.
+
+* **`/sqd savekit <kit_name>`**
+  * **Description:** Saves your current inventory, armor, offhand item, and active potion effects under the specified kit name.
+
+* **`/sqd seticon <kit_name>`**
+  * **Description:** Sets the display icon item for the specified kit based on the item currently held in your main hand. This icon appears in the Kit Selection GUI.
+
+* **`/sqd setpos1 <arena_name>`**
+  * **Description:** Sets the first corner boundary (Position 1) of the block-breaking region for the specified arena.
+
+* **`/sqd setpos2 <arena_name>`**
+  * **Description:** Sets the second corner boundary (Position 2) of the block-breaking region for the specified arena.
+
+* **`/sqd setspawn1 <arena_name>`**
+  * **Description:** Sets Player 1's starting spawn point for the specified arena at your current location and viewing direction.
+
+* **`/sqd setspawn2 <arena_name>`**
+  * **Description:** Sets Player 2's starting spawn point for the specified arena at your current location and viewing direction.
+
+* **`/sqd savearena <arena_name>`**
+  * **Description:** Finalizes and registers the arena in the database after all positions (`pos1`, `pos2`, `spawn1`, `spawn2`) have been properly assigned.
+
+* **`/sqd link <arena_name> <kit_name>`**
+  * **Description:** Links a specific arena to a designated kit. Matches using this kit will automatically route to and utilize this linked arena.
+
+* **`/sqd reload`**
+  * **Description:** Safely reloads the script configuration, applies new changes, and restores active arena blocks without interrupting data integrity.
+
+---
+
 ## ⚠️ Current Limitations
 > **Note to Users:** The script is **not 100% complete** at the moment, and it lacks some deep features found in large paid plugins. 
 > * You may encounter limited advanced customization options.
