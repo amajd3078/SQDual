@@ -39,7 +39,7 @@ You easily control all script settings from the `options:` section at the top of
 ---
 
 ## 🌐 Links
-* **Browse My Other Works:** [Click here to view other scripts and projects by me]((https://github.com/amajd3078/SQKoth---King-of-the-hill))
+* **Browse My Other Works:** [Click here to view other scripts and projects by me (e.g., SQKoth - King of the Hill)](https://github.com/amajd3078/SQKoth---King-of-the-hill)
 
 ---
 > Developed and maintained by **amajd3078**.
