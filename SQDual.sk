@@ -1,0 +1,1718 @@
+# =====================================================================
+#   _____   ____   _____   _    _   _          
+#  / ____| / __ \ |  __ \ | |  | | | |         
+# | (___  | |  | || |  | || |  | | | |         
+#  \___ \ | |  | || |  | || |  | | | |         
+#  ____) || |__| || |__| || |__| | | |____     
+# |_____/  \___\_\_|_____/  \____/ |______|
+# =====================================================================
+# - Name: SQDual (Ultimate 1v1 Duel Engine)
+# - Version: 2.3 (Fully Customizable Options)
+# - Category: PvP MiniGame Mini-Engine
+# - Environment: Vanilla Skript (Zero Addons Required)
+# - Compatible Software: Minecraft 1.21.1+ (Paper / Purpur)
+# - Required Plugins: Skript
+# - Tutorial: https://github.com/amajd3078/SQDual
+# - Discord: https://discord.gg/28pTmAYCwH
+# - Author: vipx_515/amajd3078
+# =====================================================================
+
+options:
+    # Script message prefix in chat
+    prefix: &8[&bSQDual&8]&7
+    
+    # Number of points required to win the match
+    rounds_to_win: 3
+    
+    # Countdown seconds before the round begins
+    match_countdown_seconds: 5
+    
+    # The waiting seconds between rounds for the spectators
+    spectate_round_delay: 3
+    
+    # Responsible for the indicator and the end-of-round/match screen display within the same arena.
+    match_end_delay_seconds: 6
+    
+    # Responsible for lobby return time settings
+
+    lobby_return_delay_seconds: 15
+    
+    # A reward upon winning (if the economy is enabled)
+    win_reward: 50
+    
+    # The penalty for losing
+    lose_penalty: 25
+    
+    # Penalty for leaving during combat
+    leave_penalty: 50
+    
+    # Maximum match duration in seconds (10 minutes) before a time-out occurs
+
+    max_match_seconds: 600
+    
+    # Expiration time for a duel invitation, in seconds
+
+    invite_expire_seconds: 30
+
+    # Enable or disable the command blocker during combat (true / false)
+    enable_command_blocker: true
+    
+    # List of prohibited commands during combat
+    blocked_commands_list: "spawn, home, tp, tpa, warp, hub, lobby, back, ehome, espawn"
+    
+    # Enable economy and money system (true / false)
+    enable_economy_penalty: false
+    
+    # Activate the /leave command
+    enable_leave_command: true
+    
+    # Enable the quick exit item in the menu
+    enable_red_leave_item: true
+    
+    # Enable block breaking in the arena (True / False)
+    enable_block_breaking: true
+    
+    # Kits permitted to break blocks
+    kit_allow_floor_breaking: "AxePvP,GigaPvP"
+    
+    # Queue exit element
+    red_leave_material: red wool
+    red_leave_slot: 8
+    red_leave_name: &c&lLeave Queue
+    red_leave_lore: &7Right-click to leave
+    queue_item_slot: 0
+    
+    # Dual and Kit selection tool in the lobby
+    menu_item_material: iron sword
+    menu_item_slot: 0
+    menu_item_name: &c&lDuel Selector
+    menu_item_lore: &7Right-click to select a kit & duel
+
+variables:
+    {sqd.enabled} = true
+
+# =====================================================================
+# AUTO-RESET ON SCRIPT LOAD / UNLOAD
+# =====================================================================
+on script unload:
+    loop all players:
+        delete metadata tag "currentGui" of loop-player-1
+        remove invisibility from loop-player-1
+        loop all players:
+            reveal loop-player-1 to loop-player-2
+        if {sqd.in_queue::%loop-player-1%} is true:
+            clear {sqd.in_queue::%loop-player-1%}
+            clear {sqd.in_queue_kit::%loop-player-1%}
+            send "{@prefix} &cQueue was cancelled due to system reload/restart." to loop-player-1
+        if {sqd.ingame::%loop-player-1%} is true:
+            set {sqd.ingame::%loop-player-1%} to false
+            set {sqd.round_active::%loop-player-1%} to false
+            set {sqd.frozen::%loop-player-1%} to false
+            set gamemode of loop-player-1 to survival
+            teleport loop-player-1 to {sqd.hub} if {sqd.hub} is set
+            send "{@prefix} &cMatch was forcefully ended due to system reload/restart." to loop-player-1
+        if {sqd.spectating::%loop-player-1%} is true:
+            set {sqd.spectating::%loop-player-1%} to false
+            set gamemode of loop-player-1 to survival
+            teleport loop-player-1 to {sqd.hub} if {sqd.hub} is set
+        giveLobbyItems(loop-player-1)
+    
+    loop {sqd.arena_broken_blocks::*}:
+        set {_loc} to {sqd.arena_broken_locs::%loop-index%}
+        set block at {_loc} to {sqd.arena_broken_types::%loop-index%}
+    clear {sqd.arena_broken_blocks::*}
+    clear {sqd.arena_broken_locs::*}
+    clear {sqd.arena_broken_types::*}
+    clear {sqd.queue::*}
+    clear {sqd.arena_busy::*}
+
+on script load:
+    loop all players:
+        set {sqd.editing::%loop-player%} to false
+        set {sqd.ingame::%loop-player%} to false
+        set {sqd.round_active::%loop-player%} to false
+        set {sqd.frozen::%loop-player%} to false
+        set {sqd.in_queue::%loop-player%} to false
+        set {sqd.spectating::%loop-player%} to false
+        remove invisibility from loop-player
+        giveLobbyItems(loop-player)
+
+# =====================================================================
+# COMMAND SYSTEM (/sqd)
+# =====================================================================
+command /sqd [<text>] [<text>] [<text>] [<text>]:
+    trigger:
+        set {_arg1} to arg-1
+        set {_arg2} to arg-2
+        set {_arg3} to arg-3
+        set {_arg4} to arg-4
+
+        if {_arg1} is not set:
+            send "{@prefix} &eCommands:"
+            send "&7- /sqd reload &8| &7Reload script"
+            send "&7- /sqd toggle &8| &7Enable/Disable system"
+            send "&7- /sqd editmode &8| &7Toggle kit edit mode"
+            send "&7- /sqd sethub &8| &7Set hub location"
+            send "&7- /sqd delhub &8| &7Remove hub location"
+            send "&7- /sqd setkit <kitname> <icon> [<color>] &8| &7Save kit"
+            send "&7- /sqd givekit <kitname> [<player>] &8| &7Give kit"
+            send "&7- /sqd delkit <kitname> &8| &7Delete kit"
+            send "&7- /sqd kitlist &8| &7List all kits"
+            send "&7- /sqd addarena <kitname> <arenaname> &8| &7Add arena"
+            send "&7- /sqd setspawn <arenaname> <1|2> &8| &7Set spawn"
+            send "&7- /sqd setpos1 <arenaname> &8| &7Set break region pos1"
+            send "&7- /sqd setpos2 <arenaname> &8| &7Set break region pos2"
+            send "&7- /sqd delarena <arenaname> &8| &7Delete arena"
+            send "&7- /sqd arenalist &8| &7List all arenas"
+            send "&7- /sqd resetdata &8| &7Reset all stats"
+            stop
+
+        if {_arg1} is "reload":
+            if player has permission "sqd.admin":
+                play sound "block.anvil.use" with volume 0.5 and pitch 1 to player
+                execute console command "skript reload SQDual.sk"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "resetdata":
+            if player has permission "sqd.admin":
+                clear {sqd.kits::*}
+                clear {sqd.kitlist::*}
+                clear {sqd.arenas::*}
+                clear {sqd.arenalist::*}
+                clear {sqd.arena_busy::*}
+                clear {sqd.queue::*}
+                clear {sqd.hub}
+                clear {sqd.kills::*}
+                clear {sqd.deaths::*}
+                clear {sqd.wins::*}
+                clear {sqd.losses::*}
+                clear {sqd.coins::*}
+                clear {sqd.kit_kills::*}
+                clear {sqd.kit_deaths::*}
+                clear {sqd.kit_wins::*}
+                clear {sqd.kit_losses::*}
+                clear {sqd.kit_wstreak::*}
+                clear {sqd.kit_maxwstreak::*}
+                clear {sqd.gen_wstreak::*}
+                clear {sqd.gen_maxwstreak::*}
+                clear {sqd.lb_streak::*}
+                clear {sqd.allow_spec::*}
+                clear {sqd.allow_duel::*}
+                clear {sqd.hide_players::*}
+                clear {sqd.auto_lobby_kit::*}
+                clear {sqd.sent_invite::*}
+                clear {sqd.last_invite_from::*}
+                play sound "entity.item.break" with volume 0.8 and pitch 0.8 to player
+                send "{@prefix} &c&lAll system data, kits, arenas and stats have been completely reset!"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "toggle":
+            if player has permission "sqd.admin":
+                if {sqd.enabled} is true:
+                    set {sqd.enabled} to false
+                    play sound "block.stone.break" with volume 0.6 and pitch 0.8 to player
+                    send "{@prefix} &cSystem disabled!"
+                else:
+                    set {sqd.enabled} to true
+                    play sound "block.stone.break" with volume 0.6 and pitch 1.2 to player
+                    send "{@prefix} &aSystem enabled!"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "editmode" or "edit":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is true:
+                    set {sqd.editing::%player%} to false
+                    play sound "block.chest.close" with volume 0.6 and pitch 0.8 to player
+                    send "{@prefix} &cEditing mode disabled."
+                    giveLobbyItems(player)
+                else:
+                    set {sqd.editing::%player%} to true
+                    clear player's inventory
+                    play sound "block.chest.open" with volume 0.6 and pitch 1.2 to player
+                    send "{@prefix} &aEditing mode enabled. You can now modify kits, arenas, and hubs."
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "sethub":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {sqd.hub} is set:
+                    play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.5 to player
+                    send "{@prefix} &eLobby location updated to your new position!"
+                else:
+                    play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.5 to player
+                    send "{@prefix} &aLobby Hub set successfully!"
+                set {sqd.hub} to location of player
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "delhub" or "removehub":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {sqd.hub} is set:
+                    clear {sqd.hub}
+                    play sound "entity.item.break" with volume 0.6 and pitch 1 to player
+                    send "{@prefix} &aLobby hub location removed!"
+                else:
+                    send "{@prefix} &cThere is no lobby hub set to remove!"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "setkit":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    if {sqd.kitlist::*} contains {_arg2}:
+                        send "{@prefix} &eKit &a%{_arg2}% &ealready exists! Overwriting kit contents..."
+                    else:
+                        add {_arg2} to {sqd.kitlist::*}
+                        
+                    set {_icon} to {_arg3} parsed as itemtype
+                    if {_icon} is not set:
+                        set {_icon} to diamond sword
+                    
+                    set {_color} to "&a&l"
+                    if {_arg4} is set:
+                        set {_color} to {_arg4}
+                    set {sqd.kits::%{_arg2}%::color} to {_color}
+                    
+                    clear {sqd.kits::%{_arg2}%::*}
+                    set {sqd.kits::%{_arg2}%::icon} to type of {_icon}
+                    set {sqd.kits::%{_arg2}%::color} to {_color}
+                        
+                    loop 36 times:
+                        set {sqd.kits::%{_arg2}%::inv::%loop-number - 1%} to slot (loop-number - 1) of player's inventory
+                    set {sqd.kits::%{_arg2}%::helmet} to player's helmet
+                    set {sqd.kits::%{_arg2}%::chestplate} to player's chestplate
+                    set {sqd.kits::%{_arg2}%::leggings} to player's leggings
+                    set {sqd.kits::%{_arg2}%::boots} to player's boots
+                    set {sqd.kits::%{_arg2}%::offhand} to player's offhand tool
+                    play sound "entity.player.levelup" with volume 0.6 and pitch 1.8 to player
+                    send "{@prefix} &aKit &e%{_arg2}% &asaved successfully!"
+                else:
+                    send "{@prefix} &cUsage: /sqd setkit <kitname> <icon> [<color>]"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "givekit":
+            if player has permission "sqd.admin":
+                if {_arg2} is set:
+                    if {sqd.kitlist::*} contains {_arg2}:
+                        set {_target} to player
+                        if {_arg3} is set:
+                            set {_target} to {_arg3} parsed as player
+                        if {_target} is set:
+                            giveKit({_target}, {_arg2})
+                            play sound "entity.item.pickup" with volume 0.6 and pitch 1 to player
+                            send "{@prefix} &aGave kit &e%{_arg2}% &ato %{_target}%"
+                        else:
+                            send "{@prefix} &cPlayer not found!"
+                    else:
+                        send "{@prefix} &cKit does not exist!"
+                else:
+                    send "{@prefix} &cUsage: /sqd givekit <kitname> [<player>]"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "delkit" or "deletekit":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    if {sqd.kitlist::*} contains {_arg2}:
+                        remove {_arg2} from {sqd.kitlist::*}
+                        clear {sqd.kits::%{_arg2}%::*}
+                        play sound "entity.item.break" with volume 0.6 and pitch 0.8 to player
+                        send "{@prefix} &aKit &e%{_arg2}% &adeleted!"
+                    else:
+                        send "{@prefix} &cKit &e%{_arg2}% &cdoes not exist!"
+                else:
+                    send "{@prefix} &cUsage: /sqd delkit <kitname>"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "kitlist":
+            if player has permission "sqd.admin":
+                if size of {sqd.kitlist::*} > 0:
+                    send "{@prefix} &eLoaded Kits (&a%size of {sqd.kitlist::*}%&e): &f%{sqd.kitlist::*}%"
+                else:
+                    send "{@prefix} &cNo kits found!"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "addarena":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    if {_arg3} is set:
+                        if {sqd.arenalist::*} contains {_arg3}:
+                            if {sqd.kits::%{_arg2}%::arenas::*} contains {_arg3}:
+                                send "{@prefix} &cArena &e%{_arg3}% &cis already linked to kit &e%{_arg2}%!"
+                            else:
+                                add {_arg3} to {sqd.kits::%{_arg2}%::arenas::*}
+                                play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.2 to player
+                                send "{@prefix} &aLinked existing arena &e%{_arg3}% &ato kit &e%{_arg2}%!"
+                        else:
+                            add {_arg3} to {sqd.arenalist::*}
+                            add {_arg3} to {sqd.kits::%{_arg2}%::arenas::*}
+                            play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.2 to player
+                            send "{@prefix} &aAdded new arena &e%{_arg3}% &aand linked to kit &e%{_arg2}%!"
+                    else:
+                        send "{@prefix} &cUsage: /sqd addarena <kitname> <arenaname>"
+                else:
+                    send "{@prefix} &cUsage: /sqd addarena <kitname> <arenaname>"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "setspawn":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    if {_arg3} is "1" or "2":
+                        set {sqd.arenas::%{_arg2}%::spawn::%{_arg3}%} to location of player
+                        play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.4 to player
+                        send "{@prefix} &aSpawn %{_arg3}% set for arena &e%{_arg2}%"
+                    else:
+                        send "{@prefix} &cSpawn index must be 1 or 2!"
+            stop
+
+        if {_arg1} is "setpos1":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    set {sqd.arenas::%{_arg2}%::pos1} to location of player
+                    play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.3 to player
+                    send "{@prefix} &aBreak Region Pos1 set for arena &e%{_arg2}%"
+                else:
+                    send "{@prefix} &cUsage: /sqd setpos1 <arenaname>"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "setpos2":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    set {sqd.arenas::%{_arg2}%::pos2} to location of player
+                    play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.3 to player
+                    send "{@prefix} &aBreak Region Pos2 set for arena &e%{_arg2}%"
+                else:
+                    send "{@prefix} &cUsage: /sqd setpos2 <arenaname>"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "delarena" or "deletearena":
+            if player has permission "sqd.admin":
+                if {sqd.editing::%player%} is not true:
+                    send "{@prefix} &cYou must enable edit mode first! Use /sqd editmode"
+                    stop
+                if {_arg2} is set:
+                    if {sqd.arenalist::*} contains {_arg2}:
+                        remove {_arg2} from {sqd.arenalist::*}
+                        clear {sqd.arenas::%{_arg2}%::*}
+                        loop {sqd.kitlist::*}:
+                            remove {_arg2} from {sqd.kits::%loop-value%::arenas::*}
+                        play sound "entity.item.break" with volume 0.6 and pitch 0.8 to player
+                        send "{@prefix} &aArena &e%{_arg2}% &adeleted!"
+                    else:
+                        send "{@prefix} &cArena &e%{_arg2}% &cdoes not exist!"
+                else:
+                    send "{@prefix} &cUsage: /sqd delarena <arenaname>"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+        if {_arg1} is "arenalist":
+            if player has permission "sqd.admin":
+                if size of {sqd.arenalist::*} > 0:
+                    send "{@prefix} &eLoaded Arenas (&a%size of {sqd.arenalist::*}%&e): &f%{sqd.arenalist::*}%"
+                else:
+                    send "{@prefix} &cNo arenas found!"
+            else:
+                send "{@prefix} &cNo permission."
+            stop
+
+# =====================================================================
+# DUEL INVITE SYSTEM & COMMANDS (/duel <player>)
+# =====================================================================
+command /duel [<text>] [<text>]:
+    trigger:
+        set {_sub} to arg-1
+        
+        if {_sub} is "cancel":
+            if {sqd.sent_invite::%player%} is set:
+                set {_t} to {sqd.sent_invite::%player%}
+                set {_pName} to name of player
+                clear {sqd.sent_invite::%player%}
+                clear {sqd.invite::%{_t}%::%player%::kit}
+                if {sqd.last_invite_from::%{_t}%} is player:
+                    clear {sqd.last_invite_from::%{_t}%}
+                play sound "block.note_block.bass" with volume 0.5 and pitch 0.8 to player
+                play sound "block.note_block.bass" with volume 0.5 and pitch 0.8 to {_t}
+                send "{@prefix} &cYou have cancelled your duel invitation." to player
+                send "{@prefix} &c%{_pName}% has cancelled the duel invitation." to {_t}
+            else:
+                send "{@prefix} &cYou do not have any active outgoing duel invite to cancel!"
+            stop
+
+        if {_sub} is "accept":
+            if arg-2 is set:
+                set {_target} to arg-2 parsed as player
+            else:
+                set {_target} to {sqd.last_invite_from::%player%}
+                
+            if {_target} is set:
+                processAccept(player, {_target})
+            else:
+                send "{@prefix} &cYou have no pending duel invites to accept!"
+            stop
+
+        if {_sub} is "decline":
+            if arg-2 is set:
+                set {_target} to arg-2 parsed as player
+            else:
+                set {_target} to {sqd.last_invite_from::%player%}
+                
+            if {_target} is set:
+                processDecline(player, {_target})
+            else:
+                send "{@prefix} &cYou have no pending duel invites to decline!"
+            stop
+
+        if {_sub} is set:
+            set {_target} to {_sub} parsed as player
+            if {_target} is set:
+                if {_target} is player:
+                    send "{@prefix} &cYou cannot challenge yourself!"
+                    stop
+                if {_target} is online:
+                    if {sqd.allow_duel::%{_target}%} is false:
+                        send "{@prefix} &c%{_target}% has disabled duel requests!"
+                        stop
+                    if {sqd.ingame::%player%} is true:
+                        send "{@prefix} &cYou cannot invite while in a match!"
+                        stop
+                    if {sqd.ingame::%{_target}%} is true:
+                        send "{@prefix} &c%{_target}% is currently in a match!"
+                        stop
+                    if {sqd.in_queue::%{_target}%} is true:
+                        send "{@prefix} &c%{_target}% is currently in queue!"
+                        stop
+                    if {sqd.sent_invite::%player%} is set:
+                        send "{@prefix} &cYou already have a pending duel invite! Wait for it to expire or type &e/duel cancel"
+                        stop
+                    if {sqd.invite::%{_target}%::%player%::kit} is set:
+                        send "{@prefix} &cYou already sent an invite to this player!"
+                        stop
+                    
+                    openInviteKitGui(player, {_target})
+                    stop
+                else:
+                    send "{@prefix} &cPlayer is not online!"
+                    stop
+            else:
+                send "{@prefix} &cPlayer not found!"
+                stop
+
+        send "{@prefix} &eDuel Commands:"
+        send "&7- /duel <player> &8| &7Send a duel invite"
+        send "&7- /duel accept [<player>] &8| &7Accept duel invite"
+        send "&7- /duel decline [<player>] &8| &7Decline duel invite"
+        send "&7- /duel cancel &8| &7Cancel your active invite"
+
+# =====================================================================
+# SHIFT + RIGHT CLICK PLAYER TO OPEN DUEL KIT MENU
+# =====================================================================
+on right click on player:
+    if player is sneaking:
+        cancel event
+        set {_target} to clicked player
+        if {_target} is player:
+            send "{@prefix} &cYou cannot challenge yourself!" to player
+            stop
+        if {sqd.allow_duel::%{_target}%} is false:
+            send "{@prefix} &c%{_target}% has disabled duel requests!" to player
+            stop
+        if {sqd.ingame::%player%} is true:
+            send "{@prefix} &cYou cannot invite while in a match!" to player
+            stop
+        if {sqd.ingame::%{_target}%} is true:
+            send "{@prefix} &c%{_target}% is currently in a match!" to player
+            stop
+        if {sqd.in_queue::%{_target}%} is true:
+            send "{@prefix} &c%{_target}% is currently in queue!" to player
+            stop
+        if {sqd.sent_invite::%player%} is set:
+            send "{@prefix} &cYou already have a pending duel invite! Wait for it to expire or type &e/duel cancel" to player
+            stop
+        if {sqd.invite::%{_target}%::%player%::kit} is set:
+            send "{@prefix} &cYou already sent an invite to this player!" to player
+            stop
+        
+        openInviteKitGui(player, {_target})
+
+function processAccept(p: player, target: player):
+    if {sqd.invite::%{_p}%::%{_target}%::kit} is set:
+        clear {sqd.sent_invite::%{_target}%}
+        set {_kit} to {sqd.invite::%{_p}%::%{_target}%::kit}
+        clear {sqd.invite::%{_p}%::%{_target}%::kit}
+        if {sqd.last_invite_from::%{_p}%} is {_target}:
+            clear {sqd.last_invite_from::%{_p}%}
+        
+        if {sqd.ingame::%{_p}%} is true:
+            send "{@prefix} &cYou are already in a match!" to {_p}
+            stop
+        if {sqd.ingame::%{_target}%} is true:
+            send "{@prefix} &c%{_target}% is already in a match!" to {_p}
+            stop
+
+        set {_available_arena} to ""
+        loop {sqd.kits::%{_kit}%::arenas::*}:
+            if {sqd.arena_busy::%loop-value%} is not true:
+                set {_available_arena} to loop-value
+                stop loop
+                
+        if {_available_arena} is not "":
+            if {sqd.in_queue::%{_p}%} is true:
+                remove {_p} from {sqd.queue::1v1::%{sqd.in_queue_kit::%{_p}%}%::*}
+                clear {sqd.in_queue::%{_p}%}
+                clear {sqd.in_queue_kit::%{_p}%}
+            if {sqd.in_queue::%{_target}%} is true:
+                remove {_target} from {sqd.queue::1v1::%{sqd.in_queue_kit::%{_target}%}%::*}
+                clear {sqd.in_queue::%{_target}%}
+                clear {sqd.in_queue_kit::%{_target}%}
+
+            play sound "entity.player.levelup" with volume 0.6 and pitch 1.2 to {_p}
+            play sound "entity.player.levelup" with volume 0.6 and pitch 1.2 to {_target}
+            send "{@prefix} &aYou accepted %{_target}%'s duel challenge!" to {_p}
+            send "{@prefix} &a%{_p}% accepted your duel challenge!" to {_target}
+            startMatch({_p}, {_target}, {_kit}, {_available_arena})
+        else:
+            send "{@prefix} &cNo arenas available for kit &e%{_kit}%&c!" to {_p}
+            send "{@prefix} &cNo arenas available for kit &e%{_kit}%&c!" to {_target}
+    else:
+        send "{@prefix} &cYou have no active invite from %{_target}%!" to {_p}
+
+function processDecline(p: player, target: player):
+    if {sqd.invite::%{_p}%::%{_target}%::kit} is set:
+        clear {sqd.sent_invite::%{_target}%}
+        clear {sqd.invite::%{_p}%::%{_target}%::kit}
+        if {sqd.last_invite_from::%{_p}%} is {_target}:
+            clear {sqd.last_invite_from::%{_p}%}
+        play sound "block.note_block.bass" with volume 0.5 and pitch 0.7 to {_p}
+        play sound "block.note_block.bass" with volume 0.5 and pitch 0.7 to {_target}
+        send "{@prefix} &cYou declined %{_target}%'s duel invitation." to {_p}
+        send "{@prefix} &c%{_p}% declined your duel invitation." to {_target}
+    else:
+        send "{@prefix} &cYou have no active invite from %{_target}%!" to {_p}
+
+# =====================================================================
+# KIT SELECTION GUI - TOP 3 LEADERBOARD PER KIT
+# =====================================================================
+function openKitSelectionGui(p: player):
+    play sound "ui.button.click" with volume 0.5 and pitch 1.2 to {_p}
+    set {_gui} to chest inventory with 6 rows named "&8&l⚡ Select Duel Kit ⚡"
+    
+    set {_borderSlots::*} to 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 26, 27, 35, 36, 44, 45, 46, 47, 48, 50, 51, 52, and 53
+    loop {_borderSlots::*}:
+        set slot loop-value of {_gui} to gray stained glass pane named " "
+        
+    set {_innerSlots::*} to 10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 28, 29, 30, 31, 32, 33, 34, 37, 38, 39, 40, 41, 42, and 43
+    set {_idx} to 1
+    
+    loop {sqd.kitlist::*}:
+        if {_idx} <= size of {_innerSlots::*}:
+            set {_kitname} to loop-value
+            set {_icon} to {sqd.kits::%{_kitname}%::icon}
+            set {_kColor} to {sqd.kits::%{_kitname}%::color}
+            if {_kColor} is not set:
+                set {_kColor} to "&d&l"
+                
+            if {_icon} is set:
+                set {_displayItem} to {_icon}
+                set name of {_displayItem} to "%{_kColor}%%{_kitname}%"
+                
+                delete {_scores::*}
+                delete {_topPlayers::*}
+                
+                loop all players:
+                    set {_stk} to {sqd.kit_maxwstreak::%loop-player-1%::%{_kitname}%}
+                    if {_stk} is set:
+                        if {_stk} > 0:
+                            set {_scores::%name of loop-player-1%} to {_stk}
+                
+                set {_top1} to "&7#1 None - 0"
+                set {_top2} to "&7#2 None - 0"
+                set {_top3} to "&7#3 None - 0"
+                
+                set {_rank} to 1
+                loop {_scores::*}:
+                    if {_rank} is 1:
+                        set {_top1} to "&e#1 %loop-index-2% &8- &6%loop-value-2%"
+                    else if {_rank} is 2:
+                        set {_top2} to "&f#2 %loop-index-2% &8- &6%loop-value-2%"
+                    else if {_rank} is 3:
+                        set {_top3} to "&c#3 %loop-index-2% &8- &6%loop-value-2%"
+                    add 1 to {_rank}
+                    if {_rank} > 3:
+                        stop loop
+
+                set lore of {_displayItem} to (" ", "&eTop 3 Win Streaks:", " %{_top1}%", " %{_top2}%", " %{_top3}%", " ", "&e▶ &lCLICK &eto join queue")
+                
+                set slot {_innerSlots::%{_idx}%} of {_gui} to {_displayItem}
+                add 1 to {_idx}
+
+    set slot 49 of {_gui} to ender eye named "&d&lRandom Kit" with lore ("&7Click to join queue for", "&7a random duel kit!")
+
+    open {_gui} to {_p}
+    set metadata tag "currentGui" of {_p} to "sqd-kit-select-gui"
+
+function openInviteKitGui(p: player, target: player):
+    play sound "ui.button.click" with volume 0.5 and pitch 1.2 to {_p}
+    set {_gui} to chest inventory with 6 rows named "&8&l⚡ Select Duel Kit for %{_target}% ⚡"
+    
+    set {_borderSlots::*} to 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 26, 27, 35, 36, 44, 45, 46, 47, 48, 49, 50, 51, 52, and 53
+    loop {_borderSlots::*}:
+        set slot loop-value of {_gui} to gray stained glass pane named " "
+        
+    set {_innerSlots::*} to 10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 28, 29, 30, 31, 32, 33, 34, 37, 38, 39, 40, 41, 42, and 43
+    set {_idx} to 1
+    
+    loop {sqd.kitlist::*}:
+        if {_idx} <= size of {_innerSlots::*}:
+            set {_kitname} to loop-value
+            set {_icon} to {sqd.kits::%{_kitname}%::icon}
+            set {_kColor} to {sqd.kits::%{_kitname}%::color}
+            if {_kColor} is not set:
+                set {_kColor} to "&d&l"
+                
+            if {_icon} is set:
+                set {_displayItem} to {_icon}
+                set name of {_displayItem} to "%{_kColor}%%{_kitname}%"
+                set lore of {_displayItem} to (" ", "&e▶ &lCLICK &eto challenge &a%{_target}%")
+                
+                set slot {_innerSlots::%{_idx}%} of {_gui} to {_displayItem}
+                add 1 to {_idx}
+
+    open {_gui} to {_p}
+    set metadata tag "currentGui" of {_p} to "sqd-invite-gui::%{_target}%"
+
+function sendInvite(p: player, target: player, kit: text):
+    set {sqd.invite::%{_target}%::%{_p}%::kit} to {_kit}
+    set {sqd.sent_invite::%{_p}%} to {_target}
+    set {sqd.last_invite_from::%{_target}%} to {_p}
+    set {_ping} to ping of {_p}
+    set {_pName} to name of {_p}
+    
+    play sound "block.note_block.pling" with volume 0.6 and pitch 1.5 to {_p}
+    send "{@prefix} &aYou sent a duel invite to &e%{_target}% &awith kit &e%{_kit}%&a!" to {_p}
+    
+    send "{@prefix} &b&lDuel Received" to {_target}
+    send "&3👤 &fSender: &b%{_pName}% &7(%{_ping}%ms)" to {_target}
+    send "&d⚔ &fKit: &d%{_kit}%" to {_target}
+    send "" to {_target}
+    send "&a&lTYPE: &a/duel accept &8| &c&lTYPE: &c/duel decline" to {_target}
+    
+    play sound "block.note_block.pling" with volume 0.8 and pitch 1.2 to {_target}
+    
+    wait {@invite_expire_seconds} seconds
+    if {sqd.invite::%{_target}%::%{_p}%::kit} is {_kit}:
+        clear {sqd.invite::%{_target}%::%{_p}%::kit}
+        clear {sqd.sent_invite::%{_p}%}
+        if {sqd.last_invite_from::%{_target}%} is {_p}:
+            clear {sqd.last_invite_from::%{_target}%}
+        play sound "block.note_block.bass" with volume 0.5 and pitch 0.5 to {_target}
+        play sound "block.note_block.bass" with volume 0.5 and pitch 0.5 to {_p}
+        send "{@prefix} &cDuel invite from %{_p}% has expired." to {_target}
+        send "{@prefix} &cDuel invite to %{_target}% has expired." to {_p}
+
+# =====================================================================
+# EVENTS & LOBBY
+# =====================================================================
+on join:
+    teleport player to {sqd.hub} if {sqd.hub} is set
+    remove invisibility from player
+    loop all players:
+        reveal player to loop-player-1
+        reveal loop-player-1 to player
+    set {sqd.allow_spec::%player%} to true
+    set {sqd.allow_duel::%player%} to true
+    set {sqd.auto_queue::%player%} to true
+    set {sqd.auto_lobby_kit::%player%} to true
+    set {sqd.hide_players::%player%} to false
+    set {sqd.editing::%player%} to false
+    set {sqd.ingame::%player%} to false
+    set {sqd.spectating::%player%} to false
+    set {sqd.round_active::%player%} to false
+    set {sqd.frozen::%player%} to false
+    clear player's inventory
+    wait 2 ticks
+    giveLobbyItems(player)
+
+on respawn:
+    teleport player to {sqd.hub} if {sqd.hub} is set
+    remove invisibility from player
+    loop all players:
+        reveal player to loop-player-1
+    set {sqd.editing::%player%} to false
+    set {sqd.ingame::%player%} to false
+    set {sqd.spectating::%player%} to false
+    set {sqd.round_active::%player%} to false
+    set {sqd.frozen::%player%} to false
+    clear player's inventory
+    wait 2 ticks
+    giveLobbyItems(player)
+
+on quit:
+    remove invisibility from player
+    loop all players:
+        reveal player to loop-player-1
+    clear {sqd.pending_return::%player%}
+    set {sqd.editing::%player%} to false
+    set {sqd.spectating::%player%} to false
+    set {sqd.frozen::%player%} to false
+    delete metadata tag "currentGui" of player
+    if {sqd.sent_invite::%player%} is set:
+        set {_t} to {sqd.sent_invite::%player%}
+        clear {sqd.sent_invite::%player%}
+        clear {sqd.invite::%{_t}%::%player%::kit}
+    if {sqd.in_queue::%player%} is true:
+        set {_k} to {sqd.in_queue_kit::%player%}
+        remove player from {sqd.queue::1v1::%{_k}%::*}
+        clear {sqd.in_queue::%player%}
+        clear {sqd.in_queue_kit::%player%}
+    if {sqd.ingame::%player%} is true:
+        handleMatchQuit(player)
+
+on food bar change:
+    if {sqd.ingame::%player%} is not true:
+        set food level of player to 20
+        set saturation of player to 20
+        cancel event
+
+function giveLobbyItems(p: player):
+    if {sqd.editing::%{_p}%} is not true:
+        if {sqd.ingame::%{_p}%} is not true:
+            remove invisibility from {_p}
+            loop all players:
+                reveal {_p} to loop-player-1
+            clear {_p}'s inventory
+            if {sqd.in_queue::%{_p}%} is true:
+                set {_kit} to {sqd.in_queue_kit::%{_p}%}
+                set {_kk} to {sqd.kit_kills::%{_p}%::%{_kit}%}
+                if {_kk} is not set:
+                    set {_kk} to 0
+                set {_kd} to {sqd.kit_deaths::%{_p}%::%{_kit}%}
+                if {_kd} is not set:
+                    set {_kd} to 0
+                set {_kw} to {sqd.kit_wins::%{_p}%::%{_kit}%}
+                if {_kw} is not set:
+                    set {_kw} to 0
+                set {_kl} to {sqd.kit_losses::%{_p}%::%{_kit}%}
+                if {_kl} is not set:
+                    set {_kl} to 0
+                set {_ws} to {sqd.kit_wstreak::%{_p}%::%{_kit}%}
+                if {_ws} is not set:
+                    set {_ws} to 0
+
+                set slot {@queue_item_slot} of {_p} to paper named "&e&lQueue Info" with lore ("&7Kit: &a%{_kit}%", "&8&m-------------------", "&e[%{_kit}% Stats]", "&7Kills: &a%{_kk}%", "&7Deaths: &c%{_kd}%", "&7Wins: &a%{_kw}%", "&7Losses: &c%{_kl}%", "&7Win Streak: &6%{_ws}%", "&8&m-------------------", and "&cRight-click red wool to exit")
+                set slot {@red_leave_slot} of {_p} to {@red_leave_material} named "{@red_leave_name}" with lore "{@red_leave_lore}"
+            else:
+                set slot {@menu_item_slot} of {_p} to {@menu_item_material} named "{@menu_item_name}" with lore "{@menu_item_lore}"
+                
+                set {_head} to skull of {_p}
+                set name of {_head} to "&b&lduels menu"
+                set lore of {_head} to ("&7Right-click to open main menu.")
+                set slot 8 of {_p} to {_head}
+
+on drop:
+    if {sqd.editing::%player%} is not true:
+        set {_itemName} to uncolored name of event-item
+        if {_itemName} contains "Duel Selector" or "duels menu" or "Queue Info" or "Leave Queue" or "General Stats" or "Profile Settings" or "Return to Lobby / Play Again" or "Inspect Player":
+            cancel event
+
+# =====================================================================
+# OFFHAND PROTECTION & INVENTORY HANDLERS
+# =====================================================================
+on swap item:
+    if {sqd.editing::%player%} is not true:
+        if {sqd.ingame::%player%} is not true:
+            set {_m1} to uncolored name of main hand item of player
+            set {_m2} to uncolored name of offhand item of player
+            if {_m1} contains "Duel Selector" or "duels menu" or "Queue Info" or "Leave Queue" or "General Stats" or "Profile Settings" or "Return to Lobby / Play Again" or "Inspect Player":
+                cancel event
+            if {_m2} contains "Duel Selector" or "duels menu" or "Queue Info" or "Leave Queue" or "General Stats" or "Profile Settings" or "Return to Lobby / Play Again" or "Inspect Player":
+                cancel event
+
+on inventory click:
+    if {sqd.editing::%player%} is not true:
+        set {_tag} to metadata tag "currentGui" of player
+        if {_tag} is "sqd-kit-select-gui":
+            cancel event
+            if event-item is set:
+                if index of event-slot is 49:
+                    joinRandomQueue(player)
+                else if event-item is not gray stained glass pane or barrier:
+                    set {_kit} to uncolored name of event-item
+                    if {sqd.kits::%{_kit}%::icon} is set:
+                        close player's inventory
+                        joinQueue(player, {_kit})
+        else if {_tag} starts with "sqd-invite-gui::":
+            cancel event
+            set {_targetStr} to subtext of {_tag} from index 17 to length of {_tag}
+            set {_target} to {_targetStr} parsed as player
+            
+            set {_slotIndex} to index of event-slot
+            if {_slotIndex} is 53:
+                play sound "ui.button.click" with volume 0.5 and pitch 0.8 to player
+                close player's inventory
+            else if event-item is set:
+                if event-item is not gray stained glass pane or barrier:
+                    set {_kit} to uncolored name of event-item
+                    if {sqd.kits::%{_kit}%::icon} is set:
+                        close player's inventory
+                        if {_target} is online:
+                            sendInvite(player, {_target}, {_kit})
+                        else:
+                            send "{@prefix} &cPlayer is no longer online!" to player
+        else if {_tag} is "sqd-duels-menu":
+            cancel event
+            set {_slot} to index of event-slot
+            if {_slot} is 15:
+                openProfileSettingsGui(player)
+        else if {_tag} is "sqd-profile-settings":
+            cancel event
+            set {_slot} to index of event-slot
+            if {_slot} is 0:
+                openMainGui(player)
+            else if {_slot} is 10:
+                if {sqd.allow_duel::%player%} is false:
+                    set {sqd.allow_duel::%player%} to true
+                else:
+                    set {sqd.allow_duel::%player%} to false
+                openProfileSettingsGui(player)
+            else if {_slot} is 11:
+                if {sqd.allow_spec::%player%} is false:
+                    set {sqd.allow_spec::%player%} to true
+                else:
+                    set {sqd.allow_spec::%player%} to false
+                openProfileSettingsGui(player)
+            else if {_slot} is 12:
+                if {sqd.auto_lobby_kit::%player%} is false:
+                    set {sqd.auto_lobby_kit::%player%} to true
+                else:
+                    set {sqd.auto_lobby_kit::%player%} to false
+                openProfileSettingsGui(player)
+            else if {_slot} is 13:
+                if {sqd.hide_players::%player%} is true:
+                    set {sqd.hide_players::%player%} to false
+                    loop all players:
+                        reveal loop-player-1 from player
+                else:
+                    set {sqd.hide_players::%player%} to true
+                    loop all players:
+                        if loop-player-1 is not player:
+                            hide loop-player-1 from player
+                openProfileSettingsGui(player)
+        else if {_tag} is "sqd-stats-gui":
+            cancel event
+            if index of event-slot is 26:
+                openProfileSettingsGui(player)
+        else:
+            if {sqd.ingame::%player%} is not true:
+                set {_item} to event-item
+                if {_item} is set:
+                    set {_inm} to uncolored name of {_item}
+                    if {_inm} contains "Duel Selector" or "duels menu" or "Queue Info" or "Leave Queue" or "General Stats" or "Profile Settings" or "Return to Lobby / Play Again" or "Inspect Player":
+                        cancel event
+
+on rightclick:
+    if {sqd.editing::%player%} is not true:
+        if {sqd.ingame::%player%} is not true:
+            if {sqd.in_queue::%player%} is not true:
+                set {_item} to player's tool
+                set {_name} to uncolored name of {_item}
+                
+                if {_name} contains "Duel Selector":
+                    cancel event
+                    if {sqd.enabled} is false:
+                        send "{@prefix} &cDuel system is currently disabled."
+                        stop
+                    openKitSelectionGui(player)
+                    
+                else if {_name} contains "duels menu":
+                    cancel event
+                    if {sqd.enabled} is false:
+                        send "{@prefix} &cDuel system is currently disabled."
+                        stop
+                    play sound "block.note_block.pluck" with volume 0.7 and pitch 1.5 to player
+                    openMainGui(player)
+                    
+                else if {_name} contains "Return to Lobby":
+                    cancel event
+                    set {_k} to {sqd.last_played_kit::%player%}
+                    if {_k} is set:
+                        joinQueue(player, {_k})
+
+# =====================================================================
+# MAIN MENU GUI - Duels Menu
+# =====================================================================
+function openMainGui(p: player):
+    set {_gui} to chest inventory with 3 rows named "&8&lDuels Menu"
+    
+    set {_borderSlots::*} to 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 19, 20, 21, 22, 23, 24, 25, and 26
+    loop {_borderSlots::*}:
+        set slot loop-value of {_gui} to gray stained glass pane named " "
+    
+    set {_k} to {sqd.kills::%{_p}%}
+    if {_k} is not set:
+        set {_k} to 0
+    set {_d} to {sqd.deaths::%{_p}%}
+    if {_d} is not set:
+        set {_d} to 0
+    set {_w} to {sqd.wins::%{_p}%}
+    if {_w} is not set:
+        set {_w} to 0
+    set {_l} to {sqd.losses::%{_p}%}
+    if {_l} is not set:
+        set {_l} to 0
+    set {_gw} to {sqd.gen_wstreak::%{_p}%}
+    if {_gw} is not set:
+        set {_gw} to 0
+    set {_ghw} to {sqd.gen_maxwstreak::%{_p}%}
+    if {_ghw} is not set:
+        set {_ghw} to 0
+
+    set {_econ} to {@enable_economy_penalty}
+    if {_econ} is true:
+        set {_c} to {sqd.coins::%{_p}%}
+        if {_c} is not set:
+            set {_c} to 0
+        set {_statsBook} to book named "&e&l✦ Your Statistics ✦" with lore ("&8&m-------------------", "&7Total Kills: &e%{_k}%", "&7Total Deaths: &c%{_d}%", "&7Total Wins: &a%{_w}%", "&7Total Losses: &c%{_l}%", "&7Current Win Streak: &6%{_gw}%", "&7Highest Win Streak: &6%{_gw}%", "&7Coins: &6%{_c}% coins", "&8&m-------------------")
+    else:
+        set {_statsBook} to book named "&e&l✦ Your Statistics ✦" with lore ("&8&m-------------------", "&7Total Kills: &e%{_k}%", "&7Total Deaths: &c%{_d}%", "&7Total Wins: &a%{_w}%", "&7Total Losses: &c%{_l}%", "&7Current Win Streak: &6%{_gw}%", "&7Highest Win Streak: &6%{_ghw}%", "&8&m-------------------")
+    
+    set slot 11 of {_gui} to {_statsBook}
+
+    set {_anvil} to anvil named "&b&lprofile options" with lore ("&7Click to open profile options", "&7and manage settings.")
+    set slot 15 of {_gui} to {_anvil}
+    
+    open {_gui} to {_p}
+    set metadata tag "currentGui" of {_p} to "sqd-duels-menu"
+
+# =====================================================================
+# PROFILE SETTINGS GUI (With Detailed Explanations)
+# =====================================================================
+function openProfileSettingsGui(p: player):
+    play sound "ui.button.click" with volume 0.5 and pitch 1.2 to {_p}
+    set {_gui} to chest inventory with 5 rows named "&8&lProfile Settings"
+    
+    set {_borderSlots::*} to 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 26, 27, 35, 36, 37, 38, 39, 40, 41, 42, 43, and 44
+    loop {_borderSlots::*}:
+        set slot loop-value of {_gui} to gray stained glass pane named " "
+
+    set slot 0 of {_gui} to barrier named "&c&l✖ Back" with lore "&7Click to return to Duels Menu"
+
+    # 1. Duel Requests Setting
+    set {_duelState} to "&aEnabled"
+    if {sqd.allow_duel::%{_p}%} is false:
+        set {_duelState} to "&cDisabled"
+    set {_duelReq} to diamond sword named "&b&lDuel Requests" with lore ("&8&m-------------------", "&7Status: %{_duelState}%", "&7Description:", "&7- Turn ON to allow other players", "&7  to send you 1v1 duel requests.", "&7- Turn OFF to block all incoming", "&7  duel invitations.", "&8&m-------------------", "&eClick to toggle setting!")
+    set slot 10 of {_gui} to {_duelReq}
+
+    # 2. Allow Spectators Setting
+    set {_specState} to "&aEnabled"
+    if {sqd.allow_spec::%{_p}%} is false:
+        set {_specState} to "&cDisabled"
+    set {_itemFrame} to item frame named "&e&lAllow Spectators" with lore ("&8&m-------------------", "&7Status: %{_specState}%", "&7Description:", "&7- Allow other players to use", "&7  &b/spectator <yourname>&7 to watch", "&7  your active duels live.", "&8&m-------------------", "&eClick to toggle setting!")
+    set slot 11 of {_gui} to {_itemFrame}
+
+    # 3. Auto Lobby Kit Queue Setting
+    set {_doorState} to "&aEnabled"
+    if {sqd.auto_lobby_kit::%{_p}%} is false:
+        set {_doorState} to "&cDisabled"
+    set {_doorItem} to oak door named "&e&lAuto Lobby Kit Queue" with lore ("&8&m-------------------", "&7Status: %{_doorState}%", "&7Description:", "&7- Automatically re-queue for the", "&7  same kit when clicking 'Return", "&7  to Lobby' after a match.", "&8&m-------------------", "&eClick to toggle setting!")
+    set slot 12 of {_gui} to {_doorItem}
+
+    # 4. Hide Players Setting
+    set {_hideState} to "&cDisabled"
+    if {sqd.hide_players::%{_p}%} is true:
+        set {_hideState} to "&aEnabled"
+    set {_enderEye} to ender eye named "&d&lHide Players" with lore ("&8&m-------------------", "&7Status: %{_hideState}%", "&7Description:", "&7- Hide other players around you", "&7  while in the lobby to reduce", "&7  lag and improve visibility.", "&8&m-------------------", "&eClick to toggle setting!")
+    set slot 13 of {_gui} to {_enderEye}
+
+    open {_gui} to {_p}
+    set metadata tag "currentGui" of {_p} to "sqd-profile-settings"
+
+# =====================================================================
+# SPECTATOR COMMAND (/spectator <player>) & FULL VANISH SYSTEM
+# =====================================================================
+command /spectator [<text>]:
+    trigger:
+        set {_argText} to arg-1
+        if {_argText} is not set:
+            send "{@prefix} &cUsage: /spectator <player> (Enter either player in the match)"
+            stop
+            
+        set {_target} to {_argText} parsed as player
+        if {_target} is not set:
+            loop all players:
+                if {sqd.ingame::%loop-player%} is true:
+                    if name of loop-player is {_argText}:
+                        set {_target} to loop-player
+                        stop loop
+                    else:
+                        set {_opp} to {sqd.match_opponent::%loop-player%}
+                        if {_opp} is set:
+                            if name of {_opp} is {_argText}:
+                                set {_target} to loop-player
+                                stop loop
+                                
+        if {_target} is not set:
+            send "{@prefix} &cPlayer not found or not currently in an active match!"
+            stop
+
+        if {sqd.ingame::%{_target}%} is not true:
+            send "{@prefix} &c%{_target}% is not currently in an active match!"
+            stop
+
+        if {sqd.allow_spec::%{_target}%} is false:
+            send "{@prefix} &c%{_target}% has disabled spectators!"
+            stop
+            
+        if {_target} is player:
+            send "{@prefix} &cYou cannot spectate yourself!"
+            stop
+        
+        set {sqd.spectating::%player%} to true
+        set player's gamemode to spectator
+        
+        loop all players:
+            if loop-player is not player:
+                hide player from loop-player
+                
+        teleport player to location of {_target}
+        clear player's inventory
+        set slot 0 of player to compass named "&e&lInspect Player" with lore "&7Right-click player to inspect stats & items"
+        send "{@prefix} &aYou are now spectating &e%{_target}% &a(Fully Hidden)."
+        send "{@prefix} &e%player% &7is now spectating you." to {_target}
+
+on right click on player:
+    if name of player's tool is "&e&lInspect Player":
+        cancel event
+        set {_target} to clicked player
+        set {_hp} to health of {_target}
+        set {_maxHp} to max health of {_target}
+        set {_food} to food level of {_target}
+        
+        set {_effects} to "%active potion effects of {_target}%"
+        if {_effects} is "<none>" or "":
+            set {_effects} to "None"
+            
+        send "{@prefix} &e&l--- Player Inspection: &b%{_target}% &e&l---" to player
+        send "&a❤️ Health: &f%{_hp}%/%{_maxHp}%" to player
+        send "&e🍗 Hunger: &f%{_food}%/20" to player
+        send "&d✨ Potion Effects: &f%{_effects}%" to player
+        send "&b⚔ Main Hand: &f%type of {_target}'s tool%" to player
+        send "&b🛡 Off Hand: &f%type of {_target}'s offhand tool%" to player
+        send "&f🪖 Armor: &f%helmet of {_target}%, %chestplate of {_target}%, %leggings of {_target}%, %boots of {_target}%" to player
+
+# =====================================================================
+# CREATIVE / SPECTATOR PROTECTION
+# =====================================================================
+on damage:
+    if attacker's gamemode is creative or spectator:
+        if {sqd.editing::%attacker%} is not true:
+            cancel event
+    if victim's gamemode is creative or spectator:
+        if {sqd.editing::%victim%} is not true:
+            cancel event
+
+on target:
+    if target's gamemode is creative or spectator:
+        if {sqd.editing::%target%} is not true:
+            cancel event
+
+# =====================================================================
+# BLOCK BREAKING & ARENA REGENERATION SYSTEM
+# =====================================================================
+on block break:
+    if {sqd.editing::%player%} is not true:
+        if {sqd.ingame::%player%} is true:
+            set {_enableBreak} to {@enable_block_breaking}
+            if {_enableBreak} is true:
+                if {sqd.round_active::%player%} is true:
+                    set {_kit} to {sqd.match_kit::%player%}
+                    set {_allowedKits} to {@kit_allow_floor_breaking}
+                    
+                    if {_allowedKits} does not contain {_kit}:
+                        cancel event
+                        stop
+
+                    set {_arena} to {sqd.match_arena::%player%}
+                    set {_p1} to {sqd.arenas::%{_arena}%::pos1}
+                    set {_p2} to {sqd.arenas::%{_arena}%::pos2}
+
+                    if {_p1} is not set:
+                        cancel event
+                        stop
+                    if {_p2} is not set:
+                        cancel event
+                        stop
+
+                    set {_loc} to location of event-block
+                    
+                    set {_minX} to min(x-coord of {_p1}, x-coord of {_p2})
+                    set {_maxX} to max(x-coord of {_p1}, x-coord of {_p2})
+                    set {_minY} to min(y-coord of {_p1}, y-coord of {_p2})
+                    set {_maxY} to max(y-coord of {_p1}, y-coord of {_p2})
+                    set {_minZ} to min(z-coord of {_p1}, z-coord of {_p2})
+                    set {_maxZ} to max(z-coord of {_p1}, z-coord of {_p2})
+
+                    if x-coord of {_loc} >= {_minX}:
+                        if x-coord of {_loc} <= {_maxX}:
+                            if y-coord of {_loc} >= {_minY}:
+                                if y-coord of {_loc} <= {_maxY}:
+                                    if z-coord of {_loc} >= {_minZ}:
+                                        if z-coord of {_loc} <= {_maxZ}:
+                                            add event-block to {sqd.arena_broken_blocks::%{_arena}%::*}
+                                            add {_loc} to {sqd.arena_broken_locs::%{_arena}%::*}
+                                            add type of event-block to {sqd.arena_broken_types::%{_arena}%::*}
+                                            stop
+
+                    cancel event
+                else:
+                    cancel event
+            else:
+                cancel event
+        else:
+            cancel event
+
+on block place:
+    if {sqd.editing::%player%} is not true:
+        if {sqd.ingame::%player%} is true:
+            set {_enableBreak} to {@enable_block_breaking}
+            if {_enableBreak} is true:
+                if {sqd.round_active::%player%} is not true:
+                    cancel event
+            else:
+                cancel event
+        else:
+            cancel event
+
+function resetArenaBlocks(arena: text):
+    loop {sqd.arena_broken_locs::%{_arena}%::*}:
+        set {_loc} to loop-value
+        set {_type} to {sqd.arena_broken_types::%{_arena}%::%loop-index%}
+        set block at {_loc} to {_type}
+    clear {sqd.arena_broken_blocks::%{_arena}%::*}
+    clear {sqd.arena_broken_locs::%{_arena}%::*}
+    clear {sqd.arena_broken_types::%{_arena}%::*}
+
+function clearArenaProjectiles(arena: text):
+    set {_loc1} to {sqd.arenas::%{_arena}%::spawn::1}
+    if {_loc1} is set:
+        loop all entities in radius 100 around {_loc1}:
+            if loop-entity is an arrow or a trident:
+                clear loop-entity
+
+# =====================================================================
+# RANGED WEAPON BLOCKER
+# =====================================================================
+on shoot:
+    if {sqd.frozen::%shooter%} is true:
+        cancel event
+
+on rightclick:
+    if {sqd.frozen::%player%} is true:
+        if player's tool is a bow or a crossbow or a trident:
+            cancel event
+        if player's offhand tool is a bow or a crossbow or a trident:
+            cancel event
+
+# =====================================================================
+# QUEUE & MATCHMAKING SYSTEM
+# =====================================================================
+function joinRandomQueue(p: player):
+    if size of {sqd.kitlist::*} > 0:
+        set {_randomKit} to random element out of {sqd.kitlist::*}
+        close {_p}'s inventory
+        joinQueue({_p}, {_randomKit})
+    else:
+        send "{@prefix} &cNo kits available!" to {_p}
+
+function joinQueue(p: player, kit: text):
+    set {sqd.in_queue::%{_p}%} to true
+    set {sqd.in_queue_kit::%{_p}%} to {_kit}
+    set {sqd.last_played_kit::%{_p}%} to {_kit}
+    add {_p} to {sqd.queue::1v1::%{_kit}%::*}
+    
+    giveLobbyItems({_p})
+    checkMatch({_kit})
+
+rightclick with {@red_leave_material}:
+    if {sqd.editing::%player%} is not true:
+        if {sqd.ingame::%player%} is not true:
+            if name of event-item is "{@red_leave_name}":
+                cancel event
+                execute player command "/leave"
+
+function checkMatch(kit: text) :: boolean:
+    if size of {sqd.queue::1v1::%{_kit}%::*} >= 2:
+        set {_available_arena} to ""
+        loop {sqd.kits::%{_kit}%::arenas::*}:
+            if {sqd.arena_busy::%loop-value%} is not true:
+                set {_available_arena} to loop-value
+                stop loop
+                
+        if {_available_arena} is not "":
+            set {_p1} to {sqd.queue::1v1::%{_kit}%::1}
+            set {_p2} to {sqd.queue::1v1::%{_kit}%::2}
+            
+            remove {_p1} from {sqd.queue::1v1::%{_kit}%::*}
+            remove {_p2} from {sqd.queue::1v1::%{_kit}%::*}
+            
+            startMatch({_p1}, {_p2}, {_kit}, {_available_arena})
+            return true
+    return false
+
+# =====================================================================
+# 1v1 MATCH ENGINE
+# =====================================================================
+function startMatch(p1: player, p2: player, kit: text, arena: text):
+    set {sqd.arena_busy::%{_arena}%} to true
+    
+    clear {sqd.in_queue::%{_p1}%}
+    clear {sqd.in_queue::%{_p2}%}
+    clear {sqd.in_queue_kit::%{_p1}%}
+    clear {sqd.in_queue_kit::%{_p2}%}
+    
+    set {sqd.ingame::%{_p1}%} to true
+    set {sqd.ingame::%{_p2}%} to true
+    
+    set {sqd.match_time::%{_p1}%} to 0
+    set {sqd.match_time::%{_p2}%} to 0
+    
+    set {sqd.match_arena::%{_p1}%} to {_arena}
+    set {sqd.match_arena::%{_p2}%} to {_arena}
+    
+    set {sqd.match_kit::%{_p1}%} to {_kit}
+    set {sqd.match_kit::%{_p2}%} to {_kit}
+    
+    set {sqd.match_opponent::%{_p1}%} to {_p2}
+    set {sqd.match_opponent::%{_p2}%} to {_p1}
+    
+    set {sqd.round_wins::%{_p1}%} to 0
+    set {sqd.round_wins::%{_p2}%} to 0
+
+    startRound({_p1}, {_p2}, {_kit}, {_arena})
+
+function startRound(p1: player, p2: player, kit: text, arena: text):
+    if {sqd.ingame::%{_p1}%} is not true:
+        stop
+    if {sqd.ingame::%{_p2}%} is not true:
+        stop
+
+    set {sqd.round_active::%{_p1}%} to false
+    set {sqd.round_active::%{_p2}%} to false
+
+    resetArenaBlocks({_arena})
+    clearArenaProjectiles({_arena})
+
+    set gamemode of {_p1} to survival
+    set gamemode of {_p2} to survival
+    
+    loop all players:
+        reveal {_p1} to loop-player-1
+        reveal {_p2} to loop-player-1
+
+    set {_loc1} to {sqd.arenas::%{_arena}%::spawn::1}
+    set {_loc2} to {sqd.arenas::%{_arena}%::spawn::2}
+
+    set {sqd.spawn_loc::%{_p1}%} to {_loc1}
+    set {sqd.spawn_loc::%{_p2}%} to {_loc2}
+
+    teleport {_p1} to {_loc1}
+    teleport {_p2} to {_loc2}
+
+    setupMatchPlayer({_p1}, {_kit})
+    setupMatchPlayer({_p2}, {_kit})
+
+    set {_time} to {@match_countdown_seconds}
+    
+    loop {_time} times:
+        if {sqd.ingame::%{_p1}%} is not true:
+            stop
+        if {sqd.ingame::%{_p2}%} is not true:
+            stop
+        if {sqd.skipping::%{_p1}%} is true:
+            if {sqd.skipping::%{_p2}%} is true:
+                stop loop
+        set {_timer} to ({_time} + 1) - loop-number
+        
+        play sound "block.note_block.hat" with volume 0.4 and pitch 1.2 to {_p1}
+        play sound "block.note_block.hat" with volume 0.4 and pitch 1.2 to {_p2}
+        
+        send title "&e&lStarting in &c&l%{_timer}%" with subtitle "&7Sneak (Shift) to skip!" to {_p1} for 1 second
+        send title "&e&lStarting in &c&l%{_timer}%" with subtitle "&7Sneak (Shift) to skip!" to {_p2} for 1 second
+        wait 1 second
+
+    if {sqd.ingame::%{_p1}%} is not true:
+        stop
+    if {sqd.ingame::%{_p2}%} is not true:
+        stop
+        
+    set {sqd.frozen::%{_p1}%} to false
+    set {sqd.frozen::%{_p2}%} to false
+    
+    set {sqd.round_active::%{_p1}%} to true
+    set {sqd.round_active::%{_p2}%} to true
+    
+    play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 0.8 to {_p1}
+    play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 0.8 to {_p2}
+    
+    send title "&a&lFIGHT!" with subtitle "&7First to {@rounds_to_win} wins!" to {_p1} for 1.5 seconds
+    send title "&a&lFIGHT!" with subtitle "&7First to {@rounds_to_win} wins!" to {_p2} for 1.5 seconds
+
+function setupMatchPlayer(p: player, kit: text):
+    set gamemode of {_p} to survival
+    set health of {_p} to max health of {_p}
+    set food level of {_p} to 20
+    set saturation of {_p} to 5
+    giveKit({_p}, {_kit})
+    set {sqd.frozen::%{_p}%} to true
+    set {sqd.skipping::%{_p}%} to false
+
+on sneak toggle:
+    if {sqd.frozen::%player%} is true:
+        cancel event
+        set {_p} to player
+        if {sqd.skipping::%{_p}%} is not true:
+            set {sqd.skipping::%{_p}%} to true
+            play sound "ui.button.click" with volume 0.5 and pitch 1.5 to {_p}
+
+on player move:
+    if {sqd.frozen::%player%} is true:
+        teleport player to {sqd.spawn_loc::%player%}
+
+# =====================================================================
+# ACTION BAR & IN-ROUND TIMER
+# =====================================================================
+every 1 second:
+    loop all players:
+        set {_activeP} to loop-player
+        set {_pingP} to ping of {_activeP}
+
+        if {sqd.ingame::%{_activeP}%} is true:
+            if {sqd.frozen::%{_activeP}%} is true:
+                set {_statusP} to "&cNot Ready"
+                if {sqd.skipping::%{_activeP}%} is true:
+                    set {_statusP} to "&aReady"
+                send action bar "&fStatus: %{_statusP}% &7(Press Shift)" to {_activeP}
+            else:
+                if {sqd.round_active::%{_activeP}%} is true:
+                    add 1 to {sqd.match_time::%{_activeP}%}
+                
+                set {_tot} to {sqd.match_time::%{_activeP}%}
+                if {_tot} is not set:
+                    set {_tot} to 0
+                
+                if {_tot} >= {@max_match_seconds}:
+                    set {_opp} to {sqd.match_opponent::%{_activeP}%}
+                    set {_arena} to {sqd.match_arena::%{_activeP}%}
+                    set {_kit} to {sqd.match_kit::%{_activeP}%}
+                    
+                    send "{@prefix} &cMatch timed out after 10 minutes!" to {_activeP}
+                    send "{@prefix} &cMatch timed out after 10 minutes!" to {_opp}
+                    
+                    play sound "entity.villager.no" with volume 0.7 and pitch 0.9 to {_activeP}
+                    play sound "entity.villager.no" with volume 0.7 and pitch 0.9 to {_opp}
+                    
+                    send title "&c&lTIME OUT!" with subtitle "&7Match took longer than 10 mins" to {_activeP} for 3 seconds
+                    send title "&c&lTIME OUT!" with subtitle "&7Match took longer than 10 mins" to {_opp} for 3 seconds
+                    
+                    endMatch({_activeP}, {_opp}, {_arena}, {_kit})
+                else:
+                    set {_min} to floor({_tot} / 60)
+                    set {_sec} to mod({_tot}, 60)
+                    
+                    set {_mStr} to "%{_min}%"
+                    if {_min} < 10:
+                        set {_mStr} to "0%{_min}%"
+                        
+                    set {_sStr} to "%{_sec}%"
+                    if {_sec} < 10:
+                        set {_sStr} to "0%{_sec}%"
+                    
+                    set {_timeDisplay} to "%{_mStr}%:%{_sStr}%"
+                    
+                    set {_opp} to {sqd.match_opponent::%{_activeP}%}
+                    set {_myWins} to {sqd.round_wins::%{_activeP}%}
+                    set {_oppWins} to {sqd.round_wins::%{_opp}%}
+                    
+                    send action bar "&bYou: &e%{_myWins}% &8| &c%{_opp}%: &e%{_oppWins}% &8| &eTime: %{_timeDisplay}% &8| &7Ping: &a%{_pingP}%ms" to {_activeP}
+        else if {sqd.in_queue::%{_activeP}%} is true:
+            set {_kit} to {sqd.in_queue_kit::%{_activeP}%}
+            set {_inq} to size of {sqd.queue::1v1::%{_kit}%::*}
+            set {_ing} to 0
+            loop all players:
+                set {_pLoop} to loop-value-1
+                if {sqd.ingame::%{_pLoop}%} is true:
+                    if {sqd.match_kit::%{_pLoop}%} is {_kit}:
+                        add 1 to {_ing}
+            send action bar "&d%{_kit}% &8| &fqueue: &a%{_inq}% &8| &fingame: &c%{_ing}%" to {_activeP}
+
+function giveKit(p: player, kit: text):
+    clear {_p}'s inventory
+    loop 36 times:
+        set slot (loop-number - 1) of {_p}'s inventory to {sqd.kits::%{_kit}%::inv::%loop-number - 1%}
+    set {_p}'s helmet to {sqd.kits::%{_kit}%::helmet}
+    set {_p}'s chestplate to {sqd.kits::%{_kit}%::chestplate}
+    set {_p}'s leggings to {sqd.kits::%{_kit}%::leggings}
+    set {_p}'s boots to {sqd.kits::%{_kit}%::boots}
+    set {_p}'s offhand tool to {sqd.kits::%{_kit}%::offhand}
+
+# =====================================================================
+# COMBAT & QUIT HANDLING
+# =====================================================================
+on death of player:
+    if {sqd.ingame::%victim%} is true:
+        cancel event
+        
+        set {sqd.round_active::%victim%} to false
+        set {_opp} to {sqd.match_opponent::%victim%}
+        if {_opp} is set:
+            set {sqd.round_active::%{_opp}%} to false
+
+        set {_arena} to {sqd.match_arena::%victim%}
+        set {_kit} to {sqd.match_kit::%victim%}
+        
+        if {_opp} is not set:
+            endMatch(victim, victim, {_arena}, {_kit})
+            stop
+            
+        add 1 to {sqd.deaths::%victim%}
+        add 1 to {sqd.kit_deaths::%victim%::%{_kit}%}
+        
+        add 1 to {sqd.kills::%{_opp}%}
+        add 1 to {sqd.kit_kills::%{_opp}%::%{_kit}%}
+        add 1 to {sqd.round_wins::%{_opp}%}
+            
+        set gamemode of victim to spectator
+        loop all players:
+            hide victim from loop-player-1
+        clear victim's inventory
+        
+        if {sqd.round_wins::%{_opp}%} >= {@rounds_to_win}:
+            add 1 to {sqd.wins::%{_opp}%}
+            add 1 to {sqd.losses::%victim%}
+            add 1 to {sqd.kit_wins::%{_opp}%::%{_kit}%}
+            add 1 to {sqd.kit_losses::%victim%::%{_kit}%}
+            
+            add 1 to {sqd.kit_wstreak::%{_opp}%::%{_kit}%}
+            add 1 to {sqd.gen_wstreak::%{_opp}%}
+            
+            set {_currentKST} to {sqd.kit_wstreak::%{_opp}%::%{_kit}%}
+            set {_highestKST} to {sqd.kit_maxwstreak::%{_opp}%::%{_kit}%}
+            if {_highestKST} is not set:
+                set {_highestKST} to 0
+                
+            if {_currentKST} > {_highestKST}:
+                set {sqd.kit_maxwstreak::%{_opp}%::%{_kit}%} to {_currentKST}
+                
+            set {_currentGST} to {sqd.gen_wstreak::%{_opp}%}
+            set {_highestGST} to {sqd.gen_maxwstreak::%{_opp}%}
+            if {_highestGST} is not set:
+                set {_highestGST} to 0
+                
+            if {_currentGST} > {_highestGST}:
+                set {sqd.gen_maxwstreak::%{_opp}%} to {_currentGST}
+                
+            set {sqd.kit_wstreak::%victim%::%{_kit}%} to 0
+            set {sqd.gen_wstreak::%victim%} to 0
+            
+            set {_econ} to {@enable_economy_penalty}
+            if {_econ} is true:
+                add {@win_reward} to {sqd.coins::%{_opp}%}
+            
+            set gamemode of {_opp} to spectator
+            loop all players:
+                hide {_opp} from loop-player-1
+            clear {_opp}'s inventory
+            
+            send title "&a&lVICTORY!" with subtitle "&7You won the duel!" to {_opp} for 5 seconds
+            play sound "ui.toast.challenge_complete" with volume 0.7 and pitch 1 to {_opp}
+            play sound "entity.villager.no" with volume 0.7 and pitch 0.9 to victim
+            
+            send title "&c&lMATCH OVER!" with subtitle "&eMatch Finished!" to victim for 5 seconds
+            
+            wait {@match_end_delay_seconds} seconds
+            endMatch(victim, {_opp}, {_arena}, {_kit})
+        else:
+            play sound "entity.experience_orb.pickup" with volume 0.6 and pitch 1.2 to {_opp}
+            play sound "entity.villager.no" with volume 0.5 and pitch 0.8 to victim
+            
+            send title "&c&lROUND LOST!" with subtitle "&7Preparing for next round..." to victim for 2 seconds
+            send title "&a&lROUND WON!" with subtitle "&7Preparing for next round..." to {_opp} for 2 seconds
+            
+            wait {@spectate_round_delay} seconds
+            startRound(victim, {_opp}, {_kit}, {_arena})
+
+function endMatch(p1: player, p2: player, arena: text, kit: text):
+    if {_p1} is set:
+        set {sqd.ingame::%{_p1}%} to false
+        set {sqd.spectating::%{_p1}%} to false
+        set {sqd.round_active::%{_p1}%} to false
+        set {sqd.frozen::%{_p1}%} to false
+        set gamemode of {_p1} to survival
+        loop all players:
+            reveal {_p1} to loop-player-1
+        set health of {_p1} to max health of {_p1}
+        set food level of {_p1} to 20
+        set saturation of {_p1} to 20
+        clear {sqd.match_arena::%{_p1}%}
+        clear {sqd.match_opponent::%{_p1}%}
+        clear {sqd.spawn_loc::%{_p1}%}
+        clear {sqd.match_time::%{_p1}%}
+        teleport {_p1} to {sqd.hub} if {sqd.hub} is set
+        clear {_p1}'s inventory
+        giveLobbyItems({_p1})
+        
+    if {_p2} is set:
+        set {sqd.ingame::%{_p2}%} to false
+        set {sqd.spectating::%{_p2}%} to false
+        set {sqd.round_active::%{_p2}%} to false
+        set {sqd.frozen::%{_p2}%} to false
+        set gamemode of {_p2} to survival
+        loop all players:
+            reveal {_p2} to loop-player-1
+        set health of {_p2} to max health of {_p2}
+        set food level of {_p2} to 20
+        set saturation of {_p2} to 20
+        clear {sqd.match_arena::%{_p2}%}
+        clear {sqd.match_opponent::%{_p2}%}
+        clear {sqd.spawn_loc::%{_p2}%}
+        clear {sqd.match_time::%{_p2}%}
+        teleport {_p2} to {sqd.hub} if {sqd.hub} is set
+        clear {_p2}'s inventory
+        giveLobbyItems({_p2})
+
+    loop all players:
+        if {sqd.spectating::%loop-player-1%} is true:
+            set {sqd.spectating::%loop-player-1%} to false
+            set gamemode of loop-player-1 to survival
+            loop all players:
+                reveal loop-player-1 to loop-player-2
+            teleport loop-player-1 to {sqd.hub} if {sqd.hub} is set
+            send "{@prefix} &cThe match has finished! Returned to lobby." to loop-player-1
+            giveLobbyItems(loop-player-1)
+        
+    if {_arena} is set:
+        resetArenaBlocks({_arena})
+        clearArenaProjectiles({_arena})
+        set {sqd.arena_busy::%{_arena}%} to false
+
+command /leave:
+    trigger:
+        if {sqd.spectating::%player%} is true:
+            set {sqd.spectating::%player%} to false
+            set player's gamemode to survival
+            loop all players:
+                reveal player to loop-player
+            teleport player to {sqd.hub} if {sqd.hub} is set
+            play sound "block.note_block.bass" with volume 0.5 and pitch 0.8 to player
+            send "{@prefix} &cYou stopped spectating and returned to lobby."
+            giveLobbyItems(player)
+        else if {sqd.in_queue::%player%} is true:
+            set {_k} to {sqd.in_queue_kit::%player%}
+            remove player from {sqd.queue::1v1::%{_k}%::*}
+            clear {sqd.in_queue::%player%}
+            clear {sqd.in_queue_kit::%player%}
+            play sound "block.note_block.bass" with volume 0.5 and pitch 0.8 to player
+            send "{@prefix} &cYou left the queue."
+            giveLobbyItems(player)
+        else if {sqd.ingame::%player%} is true:
+            handleMatchQuit(player)
+        else:
+            send "{@prefix} &cYou are not in a queue, match, or spectating anyone right now!"
+
+function handleMatchQuit(p: player):
+    set {_opponent} to {sqd.match_opponent::%{_p}%}
+    set {_arena} to {sqd.match_arena::%{_p}%}
+    set {_kit} to {sqd.match_kit::%{_p}%}
+    
+    set {sqd.ingame::%{_p}%} to false
+    set {sqd.round_active::%{_p}%} to false
+    
+    add 1 to {sqd.losses::%{_p}%}
+    add 1 to {sqd.deaths::%{_p}%}
+    add 1 to {sqd.kit_losses::%{_p}%::%{_kit}%}
+    add 1 to {sqd.kit_deaths::%{_p}%::%{_kit}%}
+    
+    set {sqd.kit_wstreak::%{_p}%::%{_kit}%} to 0
+    set {sqd.gen_wstreak::%{_p}%} to 0
+    
+    play sound "entity.villager.no" with volume 0.7 and pitch 0.9 to {_p}
+    
+    if {_opponent} is set:
+        set {sqd.ingame::%{_opponent}%} to false
+        set {sqd.round_active::%{_opponent}%} to false
+        
+        add 1 to {sqd.wins::%{_opponent}%}
+        add 1 to {sqd.kills::%{_opponent}%}
+        add 1 to {sqd.kit_wins::%{_opponent}%::%{_kit}%}
+        add 1 to {sqd.kit_kills::%{_opponent}%::%{_kit}%}
+        
+        send title "&a&lVICTORY!" with subtitle "&c%{_p}% left the match!" to {_opponent} for 3 seconds
+        play sound "ui.toast.challenge_complete" with volume 0.7 and pitch 1 to {_opponent}
+        send "{@prefix} &aYou won the duel!" to {_opponent}
+        
+        endMatch({_p}, {_opponent}, {_arena}, {_kit})
+    else:
+        endMatch({_p}, {_opponent}, {_arena}, {_kit})
+
+# =====================================================================
+# NATIVE IN-GAME COMMAND BLOCKER
+# =====================================================================
+on command:
+    if player has permission "sqd.bypass":
+        stop
+    set {_enableBlocker} to {@enable_command_blocker}
+    if {_enableBlocker} is true:
+        if {sqd.ingame::%player%} is true:
+            set {_cmd} to command
+            set {_blocked} to {@blocked_commands_list}
+            if {_blocked} contains {_cmd}:
+                cancel event
+                send "{@prefix} &cYou cannot use /%{_cmd}% during a match!"
+                stop
